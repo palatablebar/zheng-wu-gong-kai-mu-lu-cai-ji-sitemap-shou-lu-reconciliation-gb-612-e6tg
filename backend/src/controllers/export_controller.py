@@ -54,3 +54,19 @@ def coverage_csv(db: Session, run_id: int | None, principal: dict, request: Requ
     )
     db.commit()
     return Response(content=content, media_type="text/csv; charset=utf-8", headers=csv_response_headers("coverage.csv"))
+
+
+def documents_csv(db: Session, principal: dict, request: Request) -> Response:
+    content = export_service.documents_csv(db)
+    audit_service.record(
+        db,
+        actor_email=principal["email"],
+        actor_role=principal["role"],
+        action="export.documents",
+        entity="doc_group",
+        entity_id=None,
+        detail={"bytes": len(content)},
+        ip=request.client.host if request.client else None,
+    )
+    db.commit()
+    return Response(content=content, media_type="text/csv; charset=utf-8", headers=csv_response_headers("documents.csv"))

@@ -86,6 +86,10 @@ export const ENUMS = {
     index_guess: '页码猜解',
     sitemap_probe: 'sitemap 探测',
   },
+  docRole: {
+    origin: '原稿入口',
+    repost: '转载入口',
+  },
 };
 
 export const CATEGORY_TONE = {

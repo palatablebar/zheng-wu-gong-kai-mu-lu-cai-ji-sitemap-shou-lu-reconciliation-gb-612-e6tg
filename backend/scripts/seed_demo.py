@@ -21,10 +21,11 @@ from src.models.audit import AuditLog
 from src.models.catalog_item import CatalogItem
 from src.models.crawl_run import CrawlRun
 from src.models.defect import Defect
+from src.models.doc_group import DocGroup
 from src.models.site import Site
 from src.models.sitemap_entry import SitemapEntry
 from src.models.user import User
-from src.services import crawl_run_service, fixture_site, site_service
+from src.services import crawl_run_service, fixture_site, repost_service, site_service
 from src.utils.logger import get_logger
 from src.utils.security import hash_password
 
@@ -106,8 +107,12 @@ def ensure_catalog(db, sites: dict[str, Site]) -> int:
                         depth=row["depth"],
                         discovered_from=row["discovered_from"],
                         title=row["title"],
+                        page_canonical=row.get("page_canonical"),
                     )
                 )
+            else:
+                # 页面 canonical 证据随口径演进补齐（不改人工数据）
+                exists.page_canonical = row.get("page_canonical")
     db.flush()
     return db.scalar(select(func.count()).select_from(CatalogItem)) or 0
 
@@ -152,6 +157,21 @@ def ensure_run(db) -> int:
     return db.scalar(select(func.count()).select_from(CrawlRun)) or 0
 
 
+def ensure_doc_groups(db) -> int:
+    """算法 C 幂等建组：seed 重复执行时组按 group_key 复用，不重复生成关系。"""
+    run = db.scalar(select(CrawlRun).where(CrawlRun.seed_key == SEED_RUN_KEY))
+    if run is None:
+        return 0
+    result = repost_service.rebuild_doc_groups(db, run=run)
+    logger.info(
+        "[SEED_DEMO] doc_groups=%s (created=%s reused=%s)",
+        result["summary"]["document_total"],
+        result["sync"]["created"],
+        result["sync"]["reused"],
+    )
+    return db.scalar(select(func.count()).select_from(DocGroup)) or 0
+
+
 def ensure_audit(db) -> None:
     seeds = [
         ("seed-audit-site", "admin@sitemapwatch.io", "admin", "site.create", "site", {"code": "zwgk-hezhou"}),
@@ -185,6 +205,7 @@ def seed_all() -> dict:
         sitemap = ensure_sitemaps(db, sites)
         ensure_fixtures()
         runs = ensure_run(db)
+        documents = ensure_doc_groups(db)
         ensure_audit(db)
         defects = db.scalar(select(func.count()).select_from(Defect)) or 0
         pending = db.scalar(select(func.count()).select_from(Defect).where(Defect.status == "pending")) or 0
@@ -199,6 +220,7 @@ def seed_all() -> dict:
             "catalog": catalog,
             "sitemap": sitemap,
             "runs": runs,
+            "documents": documents,
             "defects": defects,
             "pending": pending,
         }

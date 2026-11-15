@@ -5,7 +5,10 @@
 - `only_in_catalog`（A 不在 B）→ P1
 - `duplicate_slug`（多个原始 URL 归一后撞车）→ P1
 - `redirect_chain`（入口 301）→ P2
-- `canonical_mismatch`（rel=canonical 指向别处）→ P2
+- `canonical_mismatch`（rel=canonical 指向**同站**别处）→ P2
+
+跨站 rel=canonical（转载页把原稿地址写成规范地址）不算缺陷：转入
+`sets.repost_signals`，由算法 C（repost_engine）建立可追溯的转载关系。
 
 覆盖率 `|A∩B∩C| / |A|`；不可达率 `|A\\C| / |A|`。
 纯函数：输入集合 + 探测结果，输出缺陷与统计，两次调用完全一致。
@@ -13,7 +16,7 @@
 from __future__ import annotations
 
 from src.constants.enums import CATEGORY_SEVERITY, DefectCategory
-from src.services.url_normalize import normalize_url
+from src.services.url_normalize import normalize_url, same_site
 
 CATEGORY_TITLES: dict[str, str] = {
     DefectCategory.ONLY_IN_SITEMAP_DEAD.value: "sitemap 指向已下线页面（404）",
@@ -34,8 +37,13 @@ def reconcile(
     catalog_items: list[dict],
     sitemap_locs: list[dict],
     probes: dict[str, dict],
+    home_url: str | None = None,
 ) -> dict:
-    """返回 {defects, stats, sets}。defects 按 (severity, category, url) 排序。"""
+    """返回 {defects, stats, sets}。defects 按 (severity, category, url) 排序。
+
+    home_url 提供时，跨站 rel=canonical 不判 canonical_mismatch（转载证据，
+    记入 sets.repost_signals）；缺省保持旧口径（凡不一致都报）。
+    """
     catalog_map: dict[str, list[dict]] = {}
     for item in catalog_items:
         canonical = normalize_url(item.get("canonical_url") or item.get("entry_url"))
@@ -55,6 +63,7 @@ def reconcile(
 
     defects: list[dict] = []
     live_sitemap_extras: list[str] = []
+    repost_signals: list[dict] = []
 
     def push(category: str, canonical: str, *, title: str, summary: str, evidence: dict, column_name: str = "", display_url: str | None = None) -> None:
         defects.append(
@@ -171,6 +180,10 @@ def reconcile(
         if canonical_tag:
             tag_canonical = normalize_url(canonical_tag)
             if tag_canonical and tag_canonical != canonical:
+                if home_url and not same_site(tag_canonical, home_url):
+                    # 跨站 canonical = 转载证据（算法 C 归组），不算本站缺陷
+                    repost_signals.append({"canonical": canonical, "declared": tag_canonical})
+                    continue
                 push(
                     DefectCategory.CANONICAL_MISMATCH.value,
                     canonical,
@@ -247,5 +260,6 @@ def reconcile(
             "only_in_sitemap": sorted(set_b - set_a),
             "reachable": sorted(set_c),
             "sitemap_extra_live": live_sitemap_extras,
+            "repost_signals": repost_signals,
         },
     }

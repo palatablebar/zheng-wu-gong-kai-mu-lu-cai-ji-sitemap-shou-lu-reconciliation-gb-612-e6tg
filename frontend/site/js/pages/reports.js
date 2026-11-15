@@ -15,11 +15,12 @@ import {
 
 const state = { tab: 'coverage' };
 
-function coverageTable(sites) {
+function coverageTable(sites, docBySite = []) {
+  const docs = Object.fromEntries((docBySite || []).map((item) => [item.code, item]));
   return `<div class="table-wrap"><table class="data" style="min-width:0">
     <thead><tr>
       <th>站点</th><th>目录 A</th><th>sitemap B</th><th>可达 C</th><th>A∩B∩C</th>
-      <th>覆盖率</th><th>不可达率</th><th>死链</th><th>缺陷</th><th>P0/P1/P2</th>
+      <th>覆盖率</th><th>不可达率</th><th>死链</th><th>缺陷</th><th>P0/P1/P2</th><th>涉及稿件</th><th>转载入口</th>
     </tr></thead>
     <tbody>${sites
       .map(
@@ -34,6 +35,8 @@ function coverageTable(sites) {
           <td class="num">${esc(site.dead)}</td>
           <td class="num">${esc(site.defects)}</td>
           <td class="num">${esc(site.p0)}/${esc(site.p1)}/${esc(site.p2)}</td>
+          <td class="num">${esc(fmtNum(docs[site.code]?.documents ?? 0))}</td>
+          <td class="num">${esc(fmtNum(docs[site.code]?.repost_in ?? 0))}</td>
         </tr>`,
       )
       .join('')}</tbody></table></div>`;
@@ -48,6 +51,8 @@ async function renderCoverage(view, ctx) {
   const run = await api.get(`/api/crawl-runs/${latest.id}`);
   const sites = (run.metrics || {}).sites || [];
   const totals = (run.metrics || {}).totals || {};
+  const docs = (run.metrics || {}).documents || {};
+  const docList = await api.get('/api/documents', { multi_site: true, limit: 50 });
   return `
     <section class="panel">
       <div class="panel-head">
@@ -64,8 +69,42 @@ async function renderCoverage(view, ctx) {
           <dt>重复率</dt><dd class="mono">${esc(fmtPct(run.dup_ratio))}（抓取 ${esc(fmtNum(run.links))} 条 → 去重 ${esc(fmtNum(run.unique_links))} 条）</dd>
           <dt>缺陷构成</dt><dd>P0 ${esc(run.p0_count)} / P1 ${esc(run.p1_count)} / P2 ${esc(run.p2_count)}，合计 ${esc(run.defect_count)} 条</dd>
         </div>
+        <div class="rule-label" style="margin-top:14px">稿件维度（跨站去重）</div>
+        <div class="kv">
+          <dt>跨站稿件数</dt><dd class="mono">${esc(fmtNum(docs.document_total ?? 0))} 份</dd>
+          <dt>各站真实入口</dt><dd class="mono">${esc(fmtNum(docs.entry_total ?? run.catalog_count))} 条（Σ 各站目录）</dd>
+          <dt>转载合并</dt><dd class="mono">${esc(fmtNum(docs.merged_entries ?? 0))} 条 = 入口 ${esc(fmtNum(docs.entry_total ?? run.catalog_count))} − 稿件 ${esc(fmtNum(docs.document_total ?? 0))}</dd>
+          <dt>跨站转载组</dt><dd class="mono">${esc(fmtNum(docs.multi_site_groups ?? 0))} 个（转载入口 ${esc(fmtNum(docs.repost_entries ?? 0))} 条）</dd>
+          <dt>归组留痕</dt><dd class="mono">新建 ${esc(docs.groups_created ?? 0)} / 复用 ${esc(docs.groups_reused ?? 0)}（重跑不重复记账）</dd>
+        </div>
         <div class="rule-label" style="margin-top:14px">站点明细</div>
-        ${coverageTable(sites)}
+        ${coverageTable(sites, docs.by_site || [])}
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>跨站稿件组（${esc(docList.total)}）</h2>
+        <span class="meta">一组一份稿件 · 保留各站真实入口</span>
+      </div>
+      <div class="panel-body">
+        ${docList.items.length === 0 ? emptyState({ title: '没有跨站转载组', hint: '转载页 rel=canonical 指向外站已登记入口时自动归组。' }) : `<div class="table-wrap"><table class="data" style="min-width:0">
+          <thead><tr><th>稿件组</th><th>稿件</th><th>跨站</th><th>各站真实入口</th></tr></thead>
+          <tbody>${docList.items
+            .map(
+              (group) => `<tr>
+                <td class="mono">${esc(group.group_key)}</td>
+                <td>${esc(group.title)}<div class="mono muted">原稿 ${esc(group.origin_site_code)}</div></td>
+                <td class="num">${esc(group.site_count)} 站 / ${esc(group.entry_count)} 入口</td>
+                <td>${group.members
+                  .map(
+                    (member) =>
+                      `<div class="mono" style="font-size:0.78rem"><span class="badge ${member.role === 'origin' ? 'ok' : 'info'}">${esc(ENUMS.docRole[member.role] || member.role)}</span> ${esc(member.site_code)} · ${esc(member.entry_url)}</div>`,
+                  )
+                  .join('')}</td>
+              </tr>`,
+            )
+            .join('')}</tbody>
+        </table></div>`}
       </div>
     </section>
     <section class="panel">
@@ -112,7 +151,7 @@ export const reportsPage = {
         <div class="panel-head">
           <h2>报表与导出</h2>
           <div style="display:flex;gap:8px;align-items:center">
-            ${can(ctx.user.role, 'export:read') ? '<button class="btn sm ghost" id="exp-defects">缺陷 CSV</button><button class="btn sm ghost" id="exp-sites">站点 CSV</button><button class="btn sm ghost" id="exp-coverage">覆盖率 CSV</button>' : '<span class="meta">当前角色不可导出</span>'}
+            ${can(ctx.user.role, 'export:read') ? '<button class="btn sm ghost" id="exp-defects">缺陷 CSV</button><button class="btn sm ghost" id="exp-sites">站点 CSV</button><button class="btn sm ghost" id="exp-coverage">覆盖率 CSV</button><button class="btn sm ghost" id="exp-documents">稿件 CSV</button>' : '<span class="meta">当前角色不可导出</span>'}
           </div>
         </div>
         <div class="panel-body">
@@ -135,6 +174,7 @@ export const reportsPage = {
       ['#exp-defects', '/api/exports/defects.csv', 'defects.csv', '缺陷清单'],
       ['#exp-sites', '/api/exports/sites.csv', 'sites.csv', '站点覆盖表'],
       ['#exp-coverage', '/api/exports/coverage.csv', 'coverage.csv', '覆盖率报表'],
+      ['#exp-documents', '/api/exports/documents.csv', 'documents.csv', '跨站稿件组'],
     ];
     downloads.forEach(([selector, path, filename, label]) => {
       view.querySelector(selector)?.addEventListener('click', async () => {

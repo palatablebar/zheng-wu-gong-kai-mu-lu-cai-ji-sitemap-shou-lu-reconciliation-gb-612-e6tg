@@ -12,6 +12,7 @@ import {
   fmtTime,
   gauge,
   siteCards,
+  statStrip,
   trendChart,
 } from '../ui.js';
 
@@ -58,6 +59,40 @@ export const overviewPage = {
             <span class="meta">coverage by site</span>
           </div>
           <div class="panel-body">${siteCards(data.coverage_by_site)}</div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>跨站稿件对账</h2>
+            <span class="meta">cross-site documents · 算法 C</span>
+          </div>
+          <div class="panel-body">
+            ${statStrip([
+              { label: '跨站稿件数（去重）', value: fmtNum(data.documents.document_total), hint: '全库稿件组' },
+              { label: '各站真实入口', value: fmtNum(data.documents.entry_total), hint: 'Σ 各站目录条目' },
+              { label: '转载合并入口', value: fmtNum(data.documents.merged_entries), hint: '入口 − 稿件' },
+              { label: '跨站转载组', value: fmtNum(data.documents.multi_site_groups), hint: '≥2 站联合发布' },
+            ])}
+            <div class="rule-label">勾稽口径</div>
+            <p class="mono muted" style="margin:0 0 10px">
+              跨站稿件数 ${esc(fmtNum(data.documents.document_total))} = 各站入口 ${esc(fmtNum(data.documents.entry_total))} − 转载合并 ${esc(fmtNum(data.documents.merged_entries))}；
+              同名文件无 canonical 证据不合并，各站入口全部保留${data.documents.balanced ? '（成员与目录入口对平）' : ''}。
+            </p>
+            <div class="table-wrap"><table class="data" style="min-width:0">
+              <thead><tr><th>站点</th><th>真实入口</th><th>涉及稿件</th><th>转载入口</th><th>原创被转载</th></tr></thead>
+              <tbody>${data.coverage_by_site
+                .map(
+                  (site) => `<tr>
+                    <td>${esc(site.name)}<div class="mono muted">${esc(site.code)}</div></td>
+                    <td class="num">${esc(fmtNum(site.catalog_total))}</td>
+                    <td class="num">${esc(fmtNum(site.documents ?? 0))}</td>
+                    <td class="num">${esc(fmtNum(site.repost_in ?? 0))}</td>
+                    <td class="num">${esc(fmtNum(site.origin_out ?? 0))}</td>
+                  </tr>`,
+                )
+                .join('')}</tbody>
+            </table></div>
+          </div>
         </section>
 
         <div class="grid-2">

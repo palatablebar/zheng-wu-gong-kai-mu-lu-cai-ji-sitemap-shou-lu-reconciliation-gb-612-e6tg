@@ -177,6 +177,7 @@ export function siteCards(sites) {
       ${coverageBar(site.coverage)}
       <div class="sc-row"><span>目录 / sitemap</span><b>${esc(fmtNum(site.catalog_total))} / ${esc(fmtNum(site.sitemap_total))}</b></div>
       <div class="sc-row"><span>缺陷 P0/P1/P2</span><b>${esc(site.p0)} / ${esc(site.p1)} / ${esc(site.p2)}</b></div>
+      ${site.documents !== undefined ? `<div class="sc-row"><span>涉及稿件 / 转载入</span><b>${esc(fmtNum(site.documents))} / ${esc(fmtNum(site.repost_in ?? 0))}</b></div>` : ''}
     </article>`,
     )
     .join('')}</div>`;

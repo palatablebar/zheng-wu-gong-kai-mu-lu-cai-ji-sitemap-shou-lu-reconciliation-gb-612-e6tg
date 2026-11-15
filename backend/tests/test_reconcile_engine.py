@@ -151,3 +151,30 @@ def test_deterministic_and_sorted():
     assert first == second
     severities = [item["severity"] for item in first["defects"]]
     assert severities == sorted(severities)
+
+
+def test_cross_site_canonical_becomes_repost_signal_not_defect():
+    """跨站 rel=canonical（转载页写原稿地址）不报 canonical_mismatch，转转载信号。"""
+    origin = "https://zwgk.hezhou.gov.cn/xxgk/zcwj/zcwj-021.html"
+    result = reconcile_engine.reconcile(
+        site_code="zwfw-hezhou",
+        home_url="https://zwfw.hezhou.gov.cn",
+        catalog_items=catalog("/a.html"),
+        sitemap_locs=sitemap("/a.html"),
+        probes={f"{HOME}/a.html": probe(canonical_tag=origin)},
+    )
+    assert result["defects"] == []
+    assert result["sets"]["repost_signals"] == [{"canonical": f"{HOME}/a.html", "declared": origin}]
+
+
+def test_same_site_canonical_mismatch_still_defect_with_home_url():
+    """同站 canonical 口径问题即使传了 home_url 也仍判 P2。"""
+    result = reconcile_engine.reconcile(
+        site_code="zwfw-hezhou",
+        home_url=HOME,
+        catalog_items=catalog("/a.html"),
+        sitemap_locs=sitemap("/a.html"),
+        probes={f"{HOME}/a.html": probe(canonical_tag=f"{HOME}/z.html")},
+    )
+    assert [item["category"] for item in result["defects"]] == ["canonical_mismatch"]
+    assert result["sets"]["repost_signals"] == []

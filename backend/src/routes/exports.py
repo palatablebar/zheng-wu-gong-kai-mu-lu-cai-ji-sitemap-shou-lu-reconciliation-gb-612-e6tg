@@ -38,3 +38,12 @@ def coverage_csv(
     principal: dict = Depends(require_roles(*EXPORT_ROLES)),
 ):
     return export_controller.coverage_csv(db, run_id, principal, request)
+
+
+@router.get("/documents.csv")
+def documents_csv(
+    request: Request,
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_roles(*EXPORT_ROLES)),
+):
+    return export_controller.documents_csv(db, principal, request)

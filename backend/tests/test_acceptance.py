@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from src.constants.demo_data import PAGE_SIZE, SITES
-from src.services import crawl_engine, fixture_site, reconcile_engine
+from src.services import crawl_engine, fixture_site, reconcile_engine, repost_engine
 from src.services.url_normalize import normalize_url
 
 
@@ -26,6 +26,7 @@ def _run_site(spec, base):
         catalog_items=catalog_rows,
         sitemap_locs=sitemap_rows,
         probes=probes,
+        home_url=spec["home_url"],
     )
     return crawl, result
 
@@ -89,3 +90,62 @@ def test_fixture_build_is_deterministic(tmp_path):
     assert files_a == files_b
     sample = "xxgk/zcwj/index_3.html"
     assert (root_a / sample).read_bytes() == (root_b / sample).read_bytes()
+
+
+def _doc_entries() -> list[dict]:
+    """全量目录条目（含页面 canonical 证据），模拟 execute_run 落库后的全量重算输入。"""
+    entries: list[dict] = []
+    next_id = 0
+    for site_id, spec in enumerate(SITES, start=1):
+        for row in fixture_site.catalog_rows(spec):
+            next_id += 1
+            entries.append({**row, "id": next_id, "site_id": site_id, "site_code": spec["code"]})
+    return entries
+
+
+def test_repost_groups_acceptance():
+    """算法 C 验收：7 个跨站组、8 条转载入口；跨站稿件 352 = 入口 360 − 合并 8。"""
+    result = repost_engine.build_doc_groups(_doc_entries())
+    stats = result["stats"]
+    assert stats["entry_total"] == 360            # 各站真实入口逐站保留
+    assert stats["document_total"] == 352         # 跨站稿件数（全局去重）
+    assert stats["merged_entries"] == 8           # 360 − 352，对平
+    assert stats["repost_entries"] == 8
+    assert stats["multi_site_groups"] == 7        # zwgk 原创 7 份被转载
+    assert stats["dangling"] == 0
+
+    by_site = {item["code"]: item for item in result["by_site"]}
+    assert by_site["zwgk-hezhou"]["entries"] == 120
+    assert by_site["zwgk-hezhou"]["origin_out"] == 7
+    assert by_site["zwgk-hezhou"]["repost_in"] == 0
+    assert by_site["zwfw-hezhou"]["repost_in"] == 4
+    assert by_site["quxian-hezhou"]["repost_in"] == 4
+    assert sum(item["entries"] for item in result["by_site"]) == 360
+
+    # 三站联合转载 zcwj-027：一组三入口，原稿在主站
+    joint = [group for group in result["groups"] if group["site_count"] == 3]
+    assert len(joint) == 1
+    assert joint[0]["origin_site_code"] == "zwgk-hezhou"
+    assert joint[0]["origin_url"].endswith("/xxgk/zcwj/zcwj-027.html")
+
+    # 同名文件不合并：zcwj-001 三站同 slug 但无 canonical 证据 → 3 个独立单入口组
+    slug001 = [group for group in result["groups"] if group["origin_url"].endswith("/xxgk/zcwj/zcwj-001.html")]
+    assert len(slug001) == 3
+    assert all(group["entry_count"] == 1 for group in slug001)
+
+
+def test_repost_evidence_written_into_fixture_html(tmp_path):
+    """转载页的 rel=canonical 真的指向主站原稿（证据可追溯，探测能取到）。"""
+    spec = next(item for item in SITES if item["code"] == "zwfw-hezhou")
+    root = fixture_root = fixture_site.fixture_root(spec["code"], base=tmp_path)
+    fixture_site.build_site(spec, root)
+    crawl = crawl_engine.crawl_site(home_url=spec["home_url"], fixture_root=fixture_root, page_size=PAGE_SIZE)
+    probe = crawl["probes"]["https://zwfw.hezhou.gov.cn/xxgk/zcwj/zcwj-021.html"]
+    assert probe["status"] == 200
+    assert probe["canonical_tag"] == "https://zwgk.hezhou.gov.cn/xxgk/zcwj/zcwj-021.html"
+
+    # 跨站 canonical 不报 canonical_mismatch（缺陷口径 31 不变），转为转载信号
+    _crawl, result = _run_site(spec, tmp_path)
+    mismatch = [item for item in result["defects"] if item["category"] == "canonical_mismatch"]
+    assert len(mismatch) == 2  # 只剩同站口径问题（zdxm-004 / yjgl-007）
+    assert len(result["sets"]["repost_signals"]) == 4

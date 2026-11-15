@@ -21,31 +21,57 @@ function evidenceBlock(item) {
   return `<pre class="code">${esc(lines.join('\n') || JSON.stringify(evidence, null, 2))}</pre>`;
 }
 
-function openDefect(view, ctx, item) {
+function docGroupBlock(group) {
+  if (!group) return '';
+  return `<div class="rule-label">同稿件跨站入口（${esc(group.group_key)} · ${esc(group.site_count)} 站 ${esc(group.entry_count)} 入口）</div>
+    <p class="muted" style="margin:0 0 6px">原稿：${esc(group.origin_site_code)} · <span class="mono">${esc(group.origin_url)}</span>；整改按入口流转，主站整改不掩盖其他站漏收。</p>
+    <div class="table-wrap"><table class="data" style="min-width:0">
+      <thead><tr><th>站点</th><th>角色</th><th>真实入口</th></tr></thead>
+      <tbody>${group.members
+        .map(
+          (member) => `<tr>
+            <td class="mono">${esc(member.site_code)}</td>
+            <td><span class="badge ${member.role === 'origin' ? 'ok' : 'info'}">${esc(ENUMS.docRole[member.role] || member.role)}</span></td>
+            <td class="url mono">${esc(member.entry_url)}</td>
+          </tr>`,
+        )
+        .join('')}</tbody>
+    </table></div>`;
+}
+
+async function openDefect(view, ctx, item) {
   const canReview = can(ctx.user.role, 'defect:review');
+  let detail = item;
+  try {
+    detail = await api.get(`/api/defects/${item.id}`);
+  } catch (err) {
+    toast(errorMessage(err), 'err');
+  }
   const { root, close } = drawer({
-    title: item.title,
-    subtitle: `${item.site_code} · ${item.category_label}`,
+    title: detail.title,
+    subtitle: `${detail.site_code} · ${detail.category_label}`,
     body: `${kv([
-      ['严重度', `<span class="badge ${badgeTone(item.severity)}">${esc(ENUMS.severity[item.severity] || item.severity)}</span>`],
-      ['分类', `<span class="badge ${CATEGORY_TONE[item.category] || 'info'}">${esc(item.category_label)}</span>`],
-      ['站点', esc(item.site_name || item.site_code)],
-      ['栏目', esc(item.column_name || '—')],
-      ['URL', `<span class="mono">${esc(item.canonical_url)}</span>`],
-      ['所属巡检', `<span class="mono">${esc(item.run_no || item.run_id)}</span>`],
-      ['处理状态', `<span class="badge ${statusTone(item.status)}">${esc(ENUMS.defectStatus[item.status] || item.status)}</span>`],
-      ['复核人', esc(item.reviewer || '—')],
-      ['复核备注', esc(item.review_note || '—')],
-      ['检出时间', fmtTime(item.created_at)],
+      ['严重度', `<span class="badge ${badgeTone(detail.severity)}">${esc(ENUMS.severity[detail.severity] || detail.severity)}</span>`],
+      ['分类', `<span class="badge ${CATEGORY_TONE[detail.category] || 'info'}">${esc(detail.category_label)}</span>`],
+      ['站点', esc(detail.site_name || detail.site_code)],
+      ['栏目', esc(detail.column_name || '—')],
+      ['URL', `<span class="mono">${esc(detail.canonical_url)}</span>`],
+      ['所属巡检', `<span class="mono">${esc(detail.run_no || detail.run_id)}</span>`],
+      ['稿件组', detail.doc_group ? `<span class="mono">${esc(detail.doc_group.group_key)}</span>` : '—'],
+      ['处理状态', `<span class="badge ${statusTone(detail.status)}">${esc(ENUMS.defectStatus[detail.status] || detail.status)}</span>`],
+      ['复核人', esc(detail.reviewer || '—')],
+      ['复核备注', esc(detail.review_note || '—')],
+      ['检出时间', fmtTime(detail.created_at)],
     ])}
     <div class="rule-label">判定说明</div>
-    <p style="margin:0;font-size:0.86rem;color:var(--ink-soft)">${esc(item.summary)}</p>
+    <p style="margin:0;font-size:0.86rem;color:var(--ink-soft)">${esc(detail.summary)}</p>
     <div class="rule-label">证据链</div>
-    ${evidenceBlock(item)}`,
+    ${evidenceBlock(detail)}
+    ${docGroupBlock(detail.doc_group)}`,
     footer: canReview
       ? `<form id="review-form" style="display:grid;gap:10px">
-          ${field({ label: '处理结论', name: 'status', value: item.status, options: Object.entries(ENUMS.defectStatus).map(([value, label]) => ({ value, label })) })}
-          ${field({ label: '整改备注', name: 'note', value: item.review_note || '', placeholder: '写一句整改依据，例如「已补进 sitemap 2026-11 批次」' })}
+          ${field({ label: '处理结论', name: 'status', value: detail.status, options: Object.entries(ENUMS.defectStatus).map(([value, label]) => ({ value, label })) })}
+          ${field({ label: '整改备注', name: 'note', value: detail.review_note || '', placeholder: '写一句整改依据，例如「已补进 sitemap 2026-11 批次」' })}
           <button class="btn accent" type="submit">提交整改</button>
         </form>`
       : '<span class="mono muted">公开办审阅角色可以查看，但不能处理缺陷单</span>',
@@ -54,7 +80,7 @@ function openDefect(view, ctx, item) {
     event.preventDefault();
     const form = event.target;
     try {
-      await api.patch(`/api/defects/${item.id}/review`, {
+      await api.patch(`/api/defects/${detail.id}/review`, {
         status: form.status.value,
         note: form.note.value.trim() || null,
       });

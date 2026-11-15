@@ -6,6 +6,7 @@ from src.routes.auth import router as auth_router
 from src.routes.catalog import router as catalog_router
 from src.routes.crawl_runs import router as crawl_runs_router
 from src.routes.defects import router as defects_router
+from src.routes.documents import router as documents_router
 from src.routes.exports import router as exports_router
 from src.routes.health import router as health_router
 from src.routes.overview import router as overview_router
@@ -21,5 +22,6 @@ api_router.include_router(catalog_router)
 api_router.include_router(sitemaps_router)
 api_router.include_router(crawl_runs_router)
 api_router.include_router(defects_router)
+api_router.include_router(documents_router)
 api_router.include_router(exports_router)
 api_router.include_router(audit_router)

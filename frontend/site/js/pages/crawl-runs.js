@@ -32,6 +32,7 @@ function openRun(view, ctx, run) {
       ['canonical 去重', `<span class="mono">${esc(fmtNum(run.unique_links))}（重复率 ${esc(fmtPct(run.dup_ratio))}）</span>`],
       ['目录 / sitemap', `<span class="mono">${esc(run.catalog_count)} / ${esc(run.sitemap_count)}</span>`],
       ['覆盖率 / 不可达率', `<span class="mono">${esc(fmtPct(run.coverage))} / ${esc(fmtPct(run.unreachable_rate))}</span>`],
+      ['跨站稿件', run.documents ? `<span class="mono">${esc(fmtNum(run.documents.document_total))} 份（入口 ${esc(fmtNum(run.documents.entry_total))} · 转载合并 ${esc(fmtNum(run.documents.merged_entries))}）</span>` : '—'],
       ['缺陷', `${esc(run.defect_count)} 条（P0 ${esc(run.p0_count)} / P1 ${esc(run.p1_count)} / P2 ${esc(run.p2_count)}）`],
       ['开始', fmtTime(run.started_at)],
       ['结束', fmtTime(run.finished_at)],

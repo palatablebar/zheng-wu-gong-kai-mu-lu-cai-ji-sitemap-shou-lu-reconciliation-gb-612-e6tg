@@ -1,10 +1,13 @@
 """演示账号、三个政务站与巡检口径（seed 与 fixture 生成的唯一数据源；放在 src 内便于算法与测试共用）。
 
 数量口径（README「seed 数量口径」同步）：
-- 3 个站点，每站 6 个栏目、120 条目录条目 → 目录 360 条
+- 3 个站点，每站 6 个栏目、120 条目录条目 → 目录 360 条（各站真实入口，逐站保留）
 - 每站 12 个分页清单页（page_size=12）
 - 3 份 sitemap.xml：362 条 loc，其中 14 条死链（404）
 - 1 次巡检 → 31 条缺陷（P0 14 / P1 12 / P2 5）
+- 跨站转载：主站原创 7 份（zcwj-021~027），zwfw 转载 4 份、quxian 转载 4 份
+  （zcwj-027 三站联合转载）→ 7 个跨站稿件组、8 条转载入口；
+  跨站稿件数 = 360 − 8 = 352 份（同名文件无 canonical 证据不合并）
 """
 
 DEMO_PASSWORD = "Demo@2026"
@@ -94,6 +97,14 @@ def _missing(column_code: str, size: int, count: int) -> list[tuple[str, int]]:
     return [(column_code, number) for number in range(start, min(last, start + count - 1) + 1)]
 
 
+ZWGK_HOME = "https://zwgk.hezhou.gov.cn"
+
+
+def _repost(*item_nos: int) -> dict[str, str]:
+    """跨站转载声明：本站 zcwj 条目 -> 主站原稿地址（转载页 rel=canonical 指向原稿）。"""
+    return {f"/xxgk/zcwj/zcwj-{no:03d}.html": f"{ZWGK_HOME}/xxgk/zcwj/zcwj-{no:03d}.html" for no in item_nos}
+
+
 SITES: list[dict] = [
     {
         "code": "zwgk-hezhou",
@@ -110,6 +121,7 @@ SITES: list[dict] = [
             "/xxgk/rsrm/rsrm-005.html": "/xxgk/rsrm/rsrm-015.html",
         },
         "canonical_mismatch": {},
+        "repost_of": {},
         "no_rel_next": ["rsrm"],
     },
     {
@@ -127,6 +139,7 @@ SITES: list[dict] = [
             "/xxgk/zdxm/zdxm-004.html": "/xxgk/zdxm/",
             "/xxgk/yjgl/yjgl-007.html": "/xxgk/yjgl/yjgl-008.html",
         },
+        "repost_of": _repost(21, 22, 23, 27),
         "no_rel_next": ["zdxm"],
     },
     {
@@ -141,6 +154,7 @@ SITES: list[dict] = [
         "dead": _dead(3, "zdxm"),
         "redirects": {},
         "canonical_mismatch": {},
+        "repost_of": _repost(24, 25, 26, 27),
         "no_rel_next": ["yjgl"],
     },
 ]

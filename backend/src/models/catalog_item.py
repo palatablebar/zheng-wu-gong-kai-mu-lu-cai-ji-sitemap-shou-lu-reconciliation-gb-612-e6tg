@@ -20,6 +20,8 @@ class CatalogItem(Base):
     column_name: Mapped[str] = mapped_column(String(120), default="")
     entry_url: Mapped[str] = mapped_column(String(300))
     canonical_url: Mapped[str] = mapped_column(String(300), index=True)
+    # 详情页 rel=canonical 的声明值（normalize 后）；跨站指向 = 转载证据，自指/未声明为 NULL
+    page_canonical: Mapped[str | None] = mapped_column(String(300), nullable=True)
     page_no: Mapped[int] = mapped_column(Integer, default=1)
     item_no: Mapped[int] = mapped_column(Integer, default=0)
     depth: Mapped[int] = mapped_column(Integer, default=2)

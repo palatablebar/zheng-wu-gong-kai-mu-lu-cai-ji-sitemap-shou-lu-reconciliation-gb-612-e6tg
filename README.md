@@ -41,7 +41,8 @@
 | ③ | URL 规范化与采集（算法 A） | `#/sites`（口径核对）+ `#/crawl-runs`（统计） | `services/url_normalize.py` + `services/crawl_engine.py` / `catalog_controller.preview_normalize` | `GET /api/catalog/normalize?url=` |
 | ④ | 三向对账（算法 B） | `#/crawl-runs` → `#/defects` | `services/reconcile_engine.py` / `crawl_run_service.execute_run` | `POST /api/crawl-runs` 内触发；`GET /api/defects?run_id=` |
 | ⑤ | 缺陷单与整改 | `#/defects` 对账缺陷 | `defect_service` / `defect_controller` | `GET /api/defects`、`GET /api/defects/{id}`、`PATCH /api/defects/{id}/review`、`GET /api/defects/facets` |
-| ⑥ | 覆盖率报表与导出 | `#/reports` 报表与导出（含审计页签） | `export_service` + `overview_service` + `audit_service` / `export_controller` | `GET /api/exports/{defects,sites,coverage}.csv`、`GET /api/overview`、`GET /api/audit` |
+| ⑥ | 跨站转载归组（算法 C） | `#/overview` + `#/reports`（稿件维度） | `services/repost_engine.py` + `services/repost_service.py` / `crawl_run_service.execute_run` | `GET /api/documents`、`GET /api/exports/documents.csv` |
+| ⑦ | 覆盖率报表与导出 | `#/reports` 报表与导出（含审计页签） | `export_service` + `overview_service` + `audit_service` / `export_controller` | `GET /api/exports/{defects,sites,coverage,documents}.csv`、`GET /api/overview`、`GET /api/audit` |
 
 > 登录（`/api/auth/*`）与审计（`/api/audit`）按约定只算横切能力，不占业务模块配额。
 
@@ -97,7 +98,7 @@ backend/
   src/{config,constants,controllers,middlewares,models,routes,schemas,services,utils}
   scripts/{seed_demo.py,demo_config.py,worker_healthcheck.sh}
   migrations/
-  tests/{test_url_normalize.py,test_crawl_engine.py,test_reconcile_engine.py,test_acceptance.py,test_security.py}
+  tests/{test_url_normalize.py,test_crawl_engine.py,test_reconcile_engine.py,test_repost_engine.py,test_repost_sync.py,test_acceptance.py,test_security.py}
 frontend/
   site/{index.html,css/{tokens,app}.css,js/{config,api,store,ui,app}.js,js/pages/*.js}
 sample_site/<site_code>/         ← seed 运行时在容器内生成（不进仓库）
@@ -132,6 +133,19 @@ sample_site/<site_code>/         ← seed 运行时在容器内生成（不进�
   | `A∩B` 且页面 `rel=canonical` ≠ 自身 | `canonical_mismatch` | **P2** |
 - **指标**：覆盖率 `coverage = |A∩B∩C| / |A|`；不可达率 `unreachable_rate = |A\\C| / |A|`；死链率 `sitemap_dead_rate = dead / |B|`。
 - **本批实测**：`A=360`、`B=362`、`A∩B∩C=348` → 覆盖率 `348/360 = 96.67%`；缺陷 31 条（P0 14 / P1 12 / P2 5）。
+- **跨站 canonical 的归属**：转载页把原稿地址写成 `rel=canonical` 时，算法 B 不判 `canonical_mismatch`（同站口径问题仍判 P2），转 `sets.repost_signals` 交算法 C。
+
+### 算法 C｜跨站转载归组（`services/repost_engine.py` + `services/repost_service.py`）
+
+- **背景**：三个政务站联合转载同一份稿件，地址与栏目不同；部分转载页把原稿地址写成 `rel=canonical`。按站相加会把一份稿件算成多份；按文件名合并又会误伤同名的独立文件。
+- **证据口径（只认证据，不认同名）**：详情页 `rel=canonical` 指向**外站已登记**的目录入口 → 建转载边（fixture 转载页同时写 `<meta name="repost-source">`）；**同名文件无证据不合并**，各自成组，各站真实入口全部保留。指向外站但未登记的 URL 记 `dangling` 留痕。
+- **分组**：有证据边相连的入口并成一组；组内无外向转载边的入口为原稿（`origin`），其余为转载入口（`repost`）。每个目录入口恰好属于一个组（单入口组 = 独立稿件）。
+- **落库（幂等，重跑不重复生成关系或记账）**：
+  - `doc_groups.group_key = doc-<sha1(原稿 canonical)[:16]>`，自然键唯一，重跑复用（`first_seen_run_id` 留首见巡检、`last_seen_run_id` 跟随最近确认）；
+  - `doc_group_members.catalog_item_id` 唯一：一条目录入口只属于一个组；成员保留各站真实入口 `entry_url` 与证据 `declared_canonical`；
+  - 全量重算 + 收敛：条目消失则成员删除、空组删除；返回 `{created, reused}`，重跑同一批数据 `created=0`。
+- **对平口径**：`跨站稿件数 = 组数`；`各站真实入口 = Σ 各站目录条目`；`转载合并 = 入口 − 稿件 = Σ(组入口数 − 1)`。总览 / 站点对账 / 缺陷 / 导出同时给稿件数与入口数，缺陷单仍按站点×入口生成与整改（主站整改不掩盖其他站漏收），缺陷详情可回看同稿件各站入口。
+- **本批实测**：主站原创 7 份（`zcwj-021~027`）被转载 8 次（zwfw 4 次、quxian 4 次，`zcwj-027` 三站联合）→ 跨站稿件 `352 = 360 − 8`，跨站组 7 个。
 
 ## 11. seed 数量口径
 
@@ -145,6 +159,8 @@ sample_site/<site_code>/         ← seed 运行时在容器内生成（不进�
 | 巡检（`runs=`） | 1 | `seed-crawl-2026q4`，触发方式 `seed` |
 | 缺陷单（`findings=`） | 31 | P0 14 / P1 12 / P2 5 |
 | 待整改（`pending=`） | 31 | seed 不覆盖人工整改状态 |
+| 跨站稿件组 | 352 | 360 条入口 − 8 条转载合并；跨站组 7 个（`zcwj-027` 三站联合） |
+| 转载入口 | 8 | zwfw 4 条 + quxian 4 条，均 `rel=canonical` 指向主站原稿 |
 
 ## 12. 共享枚举出现位置
 
@@ -157,6 +173,7 @@ sample_site/<site_code>/         ← seed 运行时在容器内生成（不进�
 | 巡检状态 `queued/running/success/partial/failed` | `backend/src/constants/enums.py::CrawlStatus` | `ENUMS.crawlStatus` |
 | 触发方式 `manual/schedule/seed` | `backend/src/constants/enums.py::TriggerKind` | `ENUMS.trigger` |
 | 分页发现方式 `home_link/rel_next/index_guess/sitemap_probe` | `backend/src/constants/enums.py::DiscoverySource` | `ENUMS.discovery` |
+| 稿件入口角色 `origin/repost` | `backend/src/services/repost_engine.py`（`ROLE_*`） | `ENUMS.docRole` |
 
 ## 13. 视觉方向
 

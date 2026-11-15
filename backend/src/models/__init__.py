@@ -13,6 +13,7 @@ from src.models.catalog_item import CatalogItem  # noqa: E402
 from src.models.sitemap_entry import SitemapEntry  # noqa: E402
 from src.models.crawl_run import CrawlRun  # noqa: E402
 from src.models.defect import Defect  # noqa: E402
+from src.models.doc_group import DocGroup, DocGroupMember  # noqa: E402
 
 __all__ = [
     "Base",
@@ -23,4 +24,6 @@ __all__ = [
     "SitemapEntry",
     "CrawlRun",
     "Defect",
+    "DocGroup",
+    "DocGroupMember",
 ]

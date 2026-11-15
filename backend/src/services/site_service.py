@@ -8,11 +8,19 @@ from src.constants.demo_data import ORG
 from src.models.catalog_item import CatalogItem
 from src.models.site import Site
 from src.models.sitemap_entry import SitemapEntry
+from src.services import repost_service
 from src.utils.errors import AppError, not_found
 from src.utils.timeutil import iso_utc
 
 
-def serialize(site: Site, *, catalog_count: int | None = None, sitemap_count: int | None = None, coverage: float | None = None) -> dict:
+def serialize(
+    site: Site,
+    *,
+    catalog_count: int | None = None,
+    sitemap_count: int | None = None,
+    coverage: float | None = None,
+    doc_stats: dict | None = None,
+) -> dict:
     return {
         "id": site.id,
         "code": site.code,
@@ -29,6 +37,7 @@ def serialize(site: Site, *, catalog_count: int | None = None, sitemap_count: in
         "catalog_count": catalog_count,
         "sitemap_count": sitemap_count,
         "coverage": coverage,
+        "doc_stats": doc_stats,
         "last_crawled_at": iso_utc(site.last_crawled_at),
         "created_at": iso_utc(site.created_at),
     }
@@ -75,9 +84,15 @@ def list_sites(
     total = db.scalar(count_stmt) or 0
     rows = db.scalars(stmt.order_by(Site.id).limit(limit).offset(offset)).all()
     catalog_counts, sitemap_counts = _counts(db, [row.id for row in rows])
+    doc_by_site = repost_service.document_stats(db)["by_site"]
     return {
         "items": [
-            serialize(row, catalog_count=catalog_counts.get(row.id, 0), sitemap_count=sitemap_counts.get(row.id, 0))
+            serialize(
+                row,
+                catalog_count=catalog_counts.get(row.id, 0),
+                sitemap_count=sitemap_counts.get(row.id, 0),
+                doc_stats=doc_by_site.get(row.code),
+            )
             for row in rows
         ],
         "total": total,

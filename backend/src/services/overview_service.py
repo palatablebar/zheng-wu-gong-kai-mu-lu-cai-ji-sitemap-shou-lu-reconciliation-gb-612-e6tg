@@ -1,4 +1,4 @@
-"""总览：覆盖率、P0/P1/P2、最近巡检、站点覆盖排行、7 天巡检趋势。"""
+"""总览：覆盖率、P0/P1/P2、最近巡检、站点覆盖排行、7 天巡检趋势、跨站稿件对账。"""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -21,6 +21,7 @@ from src.models.crawl_run import CrawlRun
 from src.models.defect import Defect
 from src.models.site import Site
 from src.models.sitemap_entry import SitemapEntry
+from src.services import repost_service
 from src.utils.timeutil import iso_utc, local_now, utcnow
 
 
@@ -89,6 +90,8 @@ def overview(db: Session) -> dict:
         select(Defect.site_id, Defect.severity, func.count()).group_by(Defect.site_id, Defect.severity)
     ).all()
     sites = db.scalars(select(Site).order_by(Site.id)).all()
+    documents = repost_service.document_stats(db)
+    doc_by_site = documents["by_site"]
     per_site_severity: dict[int, dict[str, int]] = {}
     for site_id, severity, count in site_rows:
         per_site_severity.setdefault(int(site_id), {})[str(severity)] = int(count)
@@ -108,6 +111,9 @@ def overview(db: Session) -> dict:
                 "p2": item.get("p2", 0),
                 "pages": item.get("pages", 0),
                 "unique": item.get("unique", 0),
+                "documents": doc_by_site.get(item.get("code") or "", {}).get("documents", 0),
+                "repost_in": doc_by_site.get(item.get("code") or "", {}).get("repost_in", 0),
+                "origin_out": doc_by_site.get(item.get("code") or "", {}).get("origin_out", 0),
             }
             for item in latest.metrics["sites"]
         ]
@@ -126,6 +132,9 @@ def overview(db: Session) -> dict:
                 "p2": per_site_severity.get(site.id, {}).get("p2", 0),
                 "pages": 0,
                 "unique": 0,
+                "documents": doc_by_site.get(site.code, {}).get("documents", 0),
+                "repost_in": doc_by_site.get(site.code, {}).get("repost_in", 0),
+                "origin_out": doc_by_site.get(site.code, {}).get("origin_out", 0),
             }
             for site in sites
         ]
@@ -159,6 +168,14 @@ def overview(db: Session) -> dict:
         "p2_total": db.scalar(select(func.count()).select_from(Defect).where(Defect.severity == "p2")) or 0,
         "worker_alive": worker_alive(),
         "latest_run": latest_run,
+        "documents": {
+            "document_total": documents["document_total"],
+            "entry_total": documents["entry_total"],
+            "merged_entries": documents["merged_entries"],
+            "repost_entries": documents["repost_entries"],
+            "multi_site_groups": documents["multi_site_groups"],
+            "balanced": documents["balanced"],
+        },
         "severity": _ordered_counts(severity_rows, DEFECT_SEVERITY_ORDER, DEFECT_SEVERITY_LABELS),
         "status": _ordered_counts(status_rows, DEFECT_STATUS_ORDER, DEFECT_STATUS_LABELS),
         "category": _ordered_counts(category_rows, DEFECT_CATEGORY_ORDER, DEFECT_CATEGORY_LABELS),

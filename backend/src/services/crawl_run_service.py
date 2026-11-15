@@ -16,7 +16,7 @@ from src.models.crawl_run import CrawlRun
 from src.models.defect import Defect
 from src.models.site import Site
 from src.models.sitemap_entry import SitemapEntry
-from src.services import crawl_engine, fixture_site, reconcile_engine
+from src.services import crawl_engine, fixture_site, reconcile_engine, repost_service
 from src.services.url_normalize import normalize_url
 from src.utils.errors import AppError
 from src.utils.timeutil import iso_utc, local_now, utcnow
@@ -48,6 +48,7 @@ def serialize(run: CrawlRun, site_name: str | None = None) -> dict:
         "p0_count": run.p0_count,
         "p1_count": run.p1_count,
         "p2_count": run.p2_count,
+        "documents": (run.metrics or {}).get("documents"),
         "metrics": run.metrics or {},
         "log_text": run.log_text,
         "started_at": iso_utc(run.started_at),
@@ -120,6 +121,19 @@ def _upsert_defects(db: Session, run: CrawlRun, site: Site, defects: list[dict])
             existing.evidence = item["evidence"]
 
 
+def _refresh_page_canonical(db: Session, site_id: int, probes: dict[str, dict]) -> None:
+    """把本次探测到的 rel=canonical 声明写回目录条目（算法 C 的页面证据留痕）。
+
+    自指 / 未声明 → NULL；跨站指向 → 保留（转载证据）；同站指向 → 保留（算法 B 判 P2）。
+    """
+    rows = db.scalars(select(CatalogItem).where(CatalogItem.site_id == site_id)).all()
+    for row in rows:
+        own = normalize_url(row.canonical_url)
+        tag = normalize_url((probes.get(own) or {}).get("canonical_tag"))
+        row.page_canonical = tag if tag and tag != own else None
+    db.flush()
+
+
 def _site_metrics(site: Site, crawl: dict, result: dict) -> dict:
     stats = result["stats"]
     crawl_stats = crawl["stats"]
@@ -190,7 +204,9 @@ def execute_run(db: Session, run: CrawlRun, sites: list[Site]) -> CrawlRun:
                 catalog_items=_catalog_payload(db, site.id),
                 sitemap_locs=sitemap_rows,
                 probes=probes,
+                home_url=site.home_url,
             )
+            _refresh_page_canonical(db, site.id, probes)
             _upsert_defects(db, run, site, result["defects"])
             metrics = _site_metrics(site, crawl, result)
             per_site.append(metrics)
@@ -199,6 +215,10 @@ def execute_run(db: Session, run: CrawlRun, sites: list[Site]) -> CrawlRun:
             for key, value in (metrics.get("by_category") or {}).items():
                 by_category[key] = by_category.get(key, 0) + int(value)
             site.last_crawled_at = utcnow()
+
+        # 算法 C：跨站转载归组（全量目录 + 页面 canonical 证据，幂等落库，重跑不重复建组/记账）
+        documents = repost_service.rebuild_doc_groups(db, run=run)
+        doc_summary = documents["summary"]
 
         catalog_total = totals["catalog_total"] or 0
         coverage = round(totals["hit"] / catalog_total, 4) if catalog_total else 0.0
@@ -237,6 +257,7 @@ def execute_run(db: Session, run: CrawlRun, sites: list[Site]) -> CrawlRun:
             "by_category": by_category,
             "sites": per_site,
             "sites_crawled": [site.code for site in sites],
+            "documents": doc_summary,
         }
         run.log_text = "\n".join(
             [
@@ -246,6 +267,11 @@ def execute_run(db: Session, run: CrawlRun, sites: list[Site]) -> CrawlRun:
                 f"三向命中 {totals['hit']} 条 → 覆盖率 {coverage:.2%}，不可达率 {unreachable_rate:.2%}",
                 f"检出缺陷 {run.defect_count} 条：P0 {totals['p0']} / P1 {totals['p1']} / P2 {totals['p2']}",
                 "分类：" + "、".join(f"{key}={value}" for key, value in sorted(by_category.items())),
+                (
+                    f"跨站稿件 {doc_summary['document_total']} 份（入口 {doc_summary['entry_total']} 条，"
+                    f"转载合并 {doc_summary['merged_entries']} 条，跨站组 {doc_summary['multi_site_groups']} 个；"
+                    f"新建组 {doc_summary['groups_created']} / 复用 {doc_summary['groups_reused']}）"
+                ),
             ]
         )
         run.status = CrawlStatus.SUCCESS.value if sites else CrawlStatus.PARTIAL.value

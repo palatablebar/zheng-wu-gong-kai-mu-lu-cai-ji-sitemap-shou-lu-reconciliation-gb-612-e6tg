@@ -15,11 +15,12 @@ from src.constants.enums import (
 from src.models.crawl_run import CrawlRun
 from src.models.defect import Defect
 from src.models.site import Site
+from src.services import repost_service
 from src.utils.errors import AppError
 from src.utils.timeutil import iso_utc, utcnow
 
 
-def serialize(defect: Defect, run_no: str | None = None, site_name: str | None = None) -> dict:
+def serialize(defect: Defect, run_no: str | None = None, site_name: str | None = None, doc_group_key: str | None = None) -> dict:
     return {
         "id": defect.id,
         "run_id": defect.run_id,
@@ -39,6 +40,7 @@ def serialize(defect: Defect, run_no: str | None = None, site_name: str | None =
         "status": defect.status,
         "status_label": DEFECT_STATUS_LABELS.get(defect.status, defect.status),
         "evidence": defect.evidence or {},
+        "doc_group_key": doc_group_key,
         "reviewer": defect.reviewer,
         "review_note": defect.review_note,
         "created_at": iso_utc(defect.created_at),
@@ -79,8 +81,12 @@ def list_defects(
     rows = db.scalars(stmt.order_by(Defect.id.desc()).limit(limit).offset(offset)).all()
     run_nos = {run.id: run.run_no for run in db.scalars(select(CrawlRun)).all()}
     site_names = {site.id: site.name for site in db.scalars(select(Site)).all()}
+    group_keys = repost_service.group_key_map(db, [row.canonical_url for row in rows])
     return {
-        "items": [serialize(row, run_nos.get(row.run_id), site_names.get(row.site_id)) for row in rows],
+        "items": [
+            serialize(row, run_nos.get(row.run_id), site_names.get(row.site_id), group_keys.get(row.canonical_url))
+            for row in rows
+        ],
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -92,6 +98,20 @@ def get_defect(db: Session, defect_id: int) -> Defect:
     if defect is None:
         raise AppError("NOT_FOUND", 404, {"entity": "defect", "id": defect_id})
     return defect
+
+
+def detail(db: Session, defect_id: int) -> dict:
+    """缺陷详情：附所属稿件组（同稿件各站真实入口，整改不互相掩盖）。"""
+    defect = get_defect(db, defect_id)
+    site = db.get(Site, defect.site_id) if defect.site_id else None
+    run = db.get(CrawlRun, defect.run_id)
+    payload = serialize(
+        defect,
+        run.run_no if run else None,
+        site.name if site else None,
+    )
+    payload["doc_group"] = repost_service.group_for_canonical(db, defect.canonical_url)
+    return payload
 
 
 def facets(db: Session, run_id: int | None = None) -> dict:

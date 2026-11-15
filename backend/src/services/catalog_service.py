@@ -21,6 +21,7 @@ def serialize(item: CatalogItem, site_name: str | None = None, site_code: str | 
         "column_name": item.column_name,
         "entry_url": item.entry_url,
         "canonical_url": item.canonical_url,
+        "page_canonical": item.page_canonical,
         "page_no": item.page_no,
         "item_no": item.item_no,
         "depth": item.depth,

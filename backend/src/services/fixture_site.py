@@ -77,11 +77,19 @@ def item_page(column_code: str, item_no: int) -> int:
 
 
 def catalog_rows(spec: dict) -> list[dict]:
-    """该站 120 条公开目录条目（CatalogItem 的 A 集合来源）。"""
+    """该站 120 条公开目录条目（CatalogItem 的 A 集合来源）。
+
+    page_canonical：详情页 rel=canonical 的声明值（normalize 前的原始口径）——
+    转载件指向主站原稿地址（跨站），同站口径问题指向站内地址，其余为 None（自指）。
+    """
     rows: list[dict] = []
+    home = spec["home_url"].rstrip("/")
+    repost_of = spec.get("repost_of") or {}
+    mismatch_of = spec.get("canonical_mismatch") or {}
     for column_code, column_name, size in COLUMNS:
         for item_no in range(1, size + 1):
             path = item_path(column_code, item_no)
+            page_canonical = repost_of.get(path) or (f"{home}{mismatch_of[path]}" if path in mismatch_of else None)
             rows.append(
                 {
                     "column_code": column_code,
@@ -93,6 +101,7 @@ def catalog_rows(spec: dict) -> list[dict]:
                     "depth": 2,
                     "discovered_from": "home_link" if column_code in spec.get("no_rel_next", []) and item_page(column_code, item_no) > 1 else "rel_next",
                     "title": item_title(column_code, item_no),
+                    "page_canonical": page_canonical,
                 }
             )
     return rows
@@ -150,7 +159,7 @@ def sitemap_xml(rows: list[dict]) -> str:
     )
 
 
-def _head(title: str, canonical: str | None) -> str:
+def _head(title: str, canonical: str | None, extra: str = "") -> str:
     canonical_line = f'  <link rel="canonical" href="{canonical}" />\n' if canonical else ""
     return (
         "<!doctype html>\n<html lang=\"zh-CN\">\n<head>\n"
@@ -158,6 +167,7 @@ def _head(title: str, canonical: str | None) -> str:
         '  <meta name="viewport" content="width=device-width, initial-scale=1" />\n'
         f"  <title>{title}</title>\n"
         f"{canonical_line}"
+        f"{extra}"
         "</head>\n<body>\n"
     )
 
@@ -221,16 +231,26 @@ def _detail_html(spec: dict, column_code: str, item_no: int) -> str:
     home = spec["home_url"].rstrip("/")
     path = item_path(column_code, item_no)
     self_url = f"{home}{path}"
+    repost = (spec.get("repost_of") or {}).get(path)
     mismatch = (spec.get("canonical_mismatch") or {}).get(path)
-    canonical = f"{home}{mismatch}" if mismatch else self_url
+    # 转载件：rel=canonical 写原稿地址（跨站），并声明 repost-source 留痕
+    canonical = repost or (f"{home}{mismatch}" if mismatch else self_url)
     title = item_title(column_code, item_no)
+    source_meta = f'  <meta name="repost-source" content="{repost}" />\n' if repost else ""
+    repost_note = (
+        f'    <p class="source">本文转载自 <a href="{repost}">{repost}</a>，'
+        f"原文首发于河州市人民政府政务公开专栏。</p>\n"
+        if repost
+        else ""
+    )
     return (
-        _head(f"{title} · {column_name} · {spec['name']}", canonical)
+        _head(f"{title} · {column_name} · {spec['name']}", canonical, extra=source_meta)
         + f'<nav class="crumbs"><a href="{home}/index.html">首页</a> / '
         f'<a href="{home}/xxgk/{column_code}/index.html">{column_name}</a></nav>\n'
         f"<article>\n  <h1>{title}</h1>\n"
         f"  <p class=\"meta\">索引号：{column_code.upper()}-2026-{item_no:03d}　成文日期：{item_lastmod(column_code, item_no)}</p>\n"
         f"  <div class=\"body\">\n    <p>{title}已经市政府同意，现予公开。本文件自发布之日起施行。</p>\n"
+        f"{repost_note}"
         f"    <p>责任部门：{spec['dept']}　公开范围：主动公开</p>\n  </div>\n"
         "</article>\n"
         f"</body>\n</html>\n"

@@ -16,7 +16,7 @@ def facets(db: Session, run_id: int | None = None) -> dict:
 
 
 def get_defect(db: Session, defect_id: int) -> dict:
-    return defect_service.serialize(defect_service.get_defect(db, defect_id))
+    return defect_service.detail(db, defect_id)
 
 
 def review(db: Session, defect_id: int, payload: dict, principal: dict, request: Request) -> dict:
